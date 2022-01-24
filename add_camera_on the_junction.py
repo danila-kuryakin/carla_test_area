@@ -4,11 +4,8 @@ import json5 as json
 import os
 import sys
 import argparse
-import time
 import numpy as np
 import carla
-import cv2 as cv
-from matplotlib import pyplot as plt
 from carla import Location, Rotation, Transform
 
 try:
@@ -25,17 +22,6 @@ try:
     from pygame.locals import K_q
 except ImportError:
     raise RuntimeError('cannot import pygame, make sure pygame package is installed')
-
-
-class CustomTimer:
-    def __init__(self):
-        try:
-            self.timer = time.perf_counter
-        except AttributeError:
-            self.timer = time.time
-
-    def time(self):
-        return self.timer()
 
 
 class DisplayManager:
@@ -89,10 +75,6 @@ class RGBCamera:
         self.display_pos = display_pos
         self.sensor = self.init_sensor(transform, options)
         self.sensor_options = options
-        self.timer = CustomTimer()
-
-        self.time_processing = 0.0
-        self.tics_processing = 0
 
         self.display_man.add_sensor(self)
 
@@ -108,7 +90,7 @@ class RGBCamera:
             camera_bp.set_attribute(key, str(options['distortion'][key]))
 
         camera = self.world.spawn_actor(camera_bp, transform, attach_to=None)
-        camera.listen(self.save_rgb_image)
+        camera.listen(self.save_image)
         self.camera = camera
 
         return camera
@@ -116,12 +98,7 @@ class RGBCamera:
     def get_sensor(self):
         return self.sensor
 
-    def get_image(self):
-        self.camera.listen(lambda image: cv.imshow('Frame', image))
-
-    def save_rgb_image(self, image):
-        t_start = self.timer.time()
-
+    def save_image(self, image):
         image.convert(carla.ColorConverter.Raw)
         array = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
         array = np.reshape(array, (image.height, image.width, 4))
@@ -130,10 +107,6 @@ class RGBCamera:
 
         if self.display_man.render_enabled():
             self.surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
-
-        t_end = self.timer.time()
-        self.time_processing += (t_end-t_start)
-        self.tics_processing += 1
 
     def render(self):
         if self.surface is not None:
@@ -293,7 +266,6 @@ def run_simulation(client):
 def read_json(path):
     with open(path, "r") as read_file:
         json_data = ''.join(line for line in read_file if not line.startswith('//'))
-        print(json_data)
         return json.loads(json_data)
 
 
