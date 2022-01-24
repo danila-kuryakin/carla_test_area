@@ -11,15 +11,10 @@ try:
 except IndexError:
     pass
 
-# ==============================================================================
-# -- imports -------------------------------------------------------------------
-# ==============================================================================
-
-
 import carla
 
 _HOST_ = '127.0.0.1'
-_PORT_ = 3000
+_PORT_ = 2000
 _SLEEP_TIME_ = 2
 
 
@@ -28,12 +23,8 @@ def main():
     client.set_timeout(2.0)
     world = client.get_world()
 
-    # print(help(t))
-    # print("(x,y,z) = ({},{},{})".format(t.location.x, t.location.y,t.location.z))
-
     while (True):
         t = world.get_spectator().get_transform()
-        # coordinate_str = "(x,y) = ({},{})".format(t.location.x, t.location.y)
         coordinate_str = "(x,y,z) = ({},{},{})".format(t.location.x, t.location.y, t.location.z) # -55.611106872558594,40.8867073059082,7.303223609924316
         rotation_str = "(yaw, pitch, roll) = ({},{},{})".format(t.rotation.yaw, t.rotation.pitch, t.rotation.roll)
         print('*'*20)

@@ -1,9 +1,14 @@
 
 import glob
+import json5 as json
 import os
 import sys
-import cv2 as cv2
-
+import argparse
+import time
+import numpy as np
+import carla
+import cv2 as cv
+from matplotlib import pyplot as plt
 from carla import Location, Rotation, Transform
 
 try:
@@ -13,12 +18,6 @@ try:
         'win-amd64' if os.name == 'nt' else 'linux-x86_64'))[0])
 except IndexError:
     pass
-
-import carla
-import argparse
-import time
-import numpy as np
-
 
 try:
     import pygame
@@ -37,8 +36,6 @@ class CustomTimer:
 
     def time(self):
         return self.timer()
-
-
 
 
 class DisplayManager:
@@ -85,13 +82,13 @@ class DisplayManager:
 
 
 class RGBCamera:
-    def __init__(self, world, display_man, transform, attached, sensor_options, display_pos):
+    def __init__(self, world, display_man, transform, options, display_pos):
         self.surface = None
         self.world = world
         self.display_man = display_man
         self.display_pos = display_pos
-        self.sensor = self.init_sensor(transform, attached, sensor_options)
-        self.sensor_options = sensor_options
+        self.sensor = self.init_sensor(transform, options)
+        self.sensor_options = options
         self.timer = CustomTimer()
 
         self.time_processing = 0.0
@@ -99,22 +96,28 @@ class RGBCamera:
 
         self.display_man.add_sensor(self)
 
-    def init_sensor(self, transform, attached, sensor_options):
+    def init_sensor(self, transform, options):
         camera_bp = self.world.get_blueprint_library().find('sensor.camera.rgb')
         disp_size = self.display_man.get_display_size()
         camera_bp.set_attribute('image_size_x', str(disp_size[0]))
         camera_bp.set_attribute('image_size_y', str(disp_size[1]))
 
-        for key in sensor_options:
-            camera_bp.set_attribute(key, sensor_options[key])
+        camera_bp.set_attribute('fov', str(options['fov']))
 
-        camera = self.world.spawn_actor(camera_bp, transform, attach_to=attached)
+        for key in options['distortion'].keys():
+            camera_bp.set_attribute(key, str(options['distortion'][key]))
+
+        camera = self.world.spawn_actor(camera_bp, transform, attach_to=None)
         camera.listen(self.save_rgb_image)
+        self.camera = camera
 
         return camera
 
     def get_sensor(self):
         return self.sensor
+
+    def get_image(self):
+        self.camera.listen(lambda image: cv.imshow('Frame', image))
 
     def save_rgb_image(self, image):
         t_start = self.timer.time()
@@ -141,64 +144,125 @@ class RGBCamera:
         self.sensor.destroy()
 
 
-def run_simulation(args, client):
-    """This function performed one test run using the args parameters
-    and connecting to the carla client passed.
-    """
+def run_simulation(client):
+    json_data = read_json("settings.json")
 
     display_manager = None
-    vehicle = None
-    vehicle_list = []
 
     try:
         # Getting the world and
         world = client.get_world()
 
-        if args.sync:
-            traffic_manager = client.get_trafficmanager(8000)
-            settings = world.get_settings()
-            traffic_manager.set_synchronous_mode(True)
-            settings.synchronous_mode = True
-            settings.fixed_delta_seconds = 0.05
-            world.apply_settings(settings)
-
         map = world.get_map()
 
-        wpJunction = map.get_waypoint(Location(-46.656982421875, 21.270511627197266, 4.308578014373779))
-        # wpJunction = map.get_waypoint(Location(-50.80909729003906,-60.55316162109375,5.965755462646484))
-        # wpJunction = map.get_waypoint(Location(-48.279052734375, 132.96006774902344, 6.757640838623047))
+        wpJunction = map.get_waypoint(Location(json_data['junction_coordinate']['x'],
+                                               json_data['junction_coordinate']['y'],
+                                               json_data['junction_coordinate']['z']))
 
         junction = wpJunction.get_junction()
         if junction:
             traffic_lights = world.get_traffic_lights_in_junction(junction.id)
-            print('Traffic Lights: ', len(traffic_lights))
+            traffic_lights_len = len(traffic_lights)
+            print('Number of traffic lights: ', traffic_lights_len)
         else:
             print('The junction not found')
+            exit(0)
 
-        display_manager = DisplayManager(grid_size=[2, 2], window_size=[args.width, args.height])
+        display_manager = DisplayManager(grid_size=[traffic_lights_len, 4], window_size=[json_data['width'], json_data['height']])
         i = 0
         for tl in traffic_lights:
-            print(tl.get_transform())
-            if i > 4:
+            if i >= traffic_lights_len:
                 break
+            print(tl.get_transform())
 
             transform = tl.get_transform()
             if -1.0 < transform.rotation.yaw < 1.0:
                 RGBCamera(world, display_manager,
-                          Transform( Location(x=transform.location.x - 7, y=transform.location.y, z=transform.location.z + 4),
-                          Rotation(yaw=transform.rotation.yaw + 90, pitch=-20, roll=0)), vehicle, {}, display_pos=[i // 2, i % 2])
+                          Transform(Location(x=transform.location.x - 7, y=transform.location.y, z=transform.location.z + 4),
+                            Rotation(yaw=transform.rotation.yaw + 90 + json_data['angel'] + json_data['intrinsic']['left']['yaw'],
+                                     pitch=json_data['orientation']["tilt"] + json_data['intrinsic']['left']['pitch'],
+                                     roll=json_data['intrinsic']['left']['roll'])), json_data, display_pos=[i, 0])
+                RGBCamera(world, display_manager,
+                          Transform(Location(x=transform.location.x - 7 - json_data['baseline'], y=transform.location.y, z=transform.location.z + 4),
+                            Rotation(yaw=transform.rotation.yaw + 90 - json_data['angel'] + json_data['intrinsic']['right']['yaw'],
+                                     pitch=json_data['orientation']["tilt"] + json_data['intrinsic']['right']['pitch'],
+                                     roll=json_data['intrinsic']['right']['roll'])), json_data, display_pos=[i, 1])
+                RGBCamera(world, display_manager,
+                          Transform(Location(x=transform.location.x - 7 - json_data['baseline'], y=transform.location.y, z=transform.location.z + 4),
+                            Rotation(yaw=transform.rotation.yaw - 90 + json_data['angel'] + json_data['intrinsic']['left']['yaw'],
+                                     pitch=json_data['orientation']["tilt"] + json_data['intrinsic']['left']['pitch'],
+                                     roll=json_data['intrinsic']['left']['roll'])), json_data, display_pos=[i, 2])
+                RGBCamera(world, display_manager,
+                          Transform(Location(x=transform.location.x - 7 , y=transform.location.y, z=transform.location.z + 4),
+                            Rotation(yaw=transform.rotation.yaw - 90 - json_data['angel'] + json_data['intrinsic']['right']['yaw'],
+                                     pitch=json_data['orientation']["tilt"] + json_data['intrinsic']['right']['pitch'],
+                                     roll=json_data['intrinsic']['right']['roll'])), json_data, display_pos=[i, 3])
+
             elif 89.0 < transform.rotation.yaw < 91.0:
                 RGBCamera(world, display_manager,
                           Transform(Location(x=transform.location.x, y=transform.location.y - 7, z=transform.location.z + 4),
-                          Rotation(yaw=transform.rotation.yaw + 90, pitch=-20, roll=0)), vehicle, {}, display_pos=[i // 2, i % 2])
+                            Rotation(yaw=transform.rotation.yaw + 90 + json_data['angel'] + json_data['intrinsic']['left']['yaw'],
+                                     pitch=json_data['orientation']["tilt"] + json_data['intrinsic']['left']['pitch'],
+                                     roll=json_data['intrinsic']['left']['roll'])), json_data, display_pos=[i, 0])
+                RGBCamera(world, display_manager,
+                          Transform(Location(x=transform.location.x, y=transform.location.y - 7 - json_data['baseline'], z=transform.location.z + 4),
+                            Rotation(yaw=transform.rotation.yaw + 90 - json_data['angel'] + json_data['intrinsic']['right']['yaw'],
+                                     pitch=json_data['orientation']["tilt"] + json_data['intrinsic']['right']['pitch'],
+                                     roll=json_data['intrinsic']['right']['roll'])), json_data, display_pos=[i, 1])
+                RGBCamera(world, display_manager,
+                          Transform(Location(x=transform.location.x, y=transform.location.y - 7- json_data['baseline'], z=transform.location.z + 4),
+                            Rotation(yaw=transform.rotation.yaw - 90 + json_data['angel'] + json_data['intrinsic']['left']['yaw'],
+                                     pitch=json_data['orientation']["tilt"] + json_data['intrinsic']['left']['pitch'],
+                                     roll=json_data['intrinsic']['left']['roll'])), json_data, display_pos=[i, 2])
+                RGBCamera(world, display_manager,
+                          Transform(Location(x=transform.location.x, y=transform.location.y - 7 , z=transform.location.z + 4),
+                            Rotation(yaw=transform.rotation.yaw - 90 - json_data['angel'] + json_data['intrinsic']['right']['yaw'],
+                                     pitch=json_data['orientation']["tilt"] + json_data['intrinsic']['right']['pitch'],
+                                     roll=json_data['intrinsic']['right']['roll'])), json_data, display_pos=[i, 3])
+
             elif 179.0 < transform.rotation.yaw < 181.0:
                 RGBCamera(world, display_manager,
-                          Transform(Location(x=transform.location.x + 7, y=transform.location.y , z=transform.location.z + 4),
-                          Rotation(yaw=transform.rotation.yaw + 90, pitch=-20, roll=0)), vehicle, {}, display_pos=[i // 2, i % 2])
+                          Transform(Location(x=transform.location.x + 7, y=transform.location.y, z=transform.location.z + 4),
+                            Rotation(yaw=transform.rotation.yaw + 90 + json_data['angel'] + json_data['intrinsic']['left']['yaw'],
+                                     pitch=json_data['orientation']["tilt"] + json_data['intrinsic']['left']['pitch'],
+                                     roll=json_data['intrinsic']['left']['roll'])), json_data, display_pos=[i, 0])
+                RGBCamera(world, display_manager,
+                          Transform(Location(x=transform.location.x + 7  + json_data['baseline'], y=transform.location.y, z=transform.location.z + 4),
+                            Rotation(yaw=transform.rotation.yaw + 90 - json_data['angel'] + json_data['intrinsic']['right']['yaw'],
+                                     pitch=json_data['orientation']["tilt"] + json_data['intrinsic']['right']['pitch'],
+                                     roll=json_data['intrinsic']['right']['roll'])), json_data, display_pos=[i, 1])
+                RGBCamera(world, display_manager,
+                          Transform(Location(x=transform.location.x + 7+ json_data['baseline'], y=transform.location.y, z=transform.location.z + 4),
+                            Rotation(yaw=transform.rotation.yaw - 90 + json_data['angel'] + json_data['intrinsic']['left']['yaw'],
+                                     pitch=json_data['orientation']["tilt"] + json_data['intrinsic']['left']['pitch'],
+                                     roll=json_data['intrinsic']['left']['roll'])), json_data, display_pos=[i, 2])
+                RGBCamera(world, display_manager,
+                          Transform(Location(x=transform.location.x + 7 , y=transform.location.y, z=transform.location.z + 4),
+                            Rotation(yaw=transform.rotation.yaw - 90 - json_data['angel'] + json_data['intrinsic']['right']['yaw'],
+                                     pitch=json_data['orientation']["tilt"] + json_data['intrinsic']['right']['pitch'],
+                                     roll=json_data['intrinsic']['right']['roll'])), json_data, display_pos=[i, 3])
+
             else:
                 RGBCamera(world, display_manager,
-                          Transform(Location(x=transform.location.x, y=transform.location.y + 7, z=transform.location.z + 4),
-                          Rotation(yaw=transform.rotation.yaw+90, pitch=-20, roll=0)), vehicle, {}, display_pos=[i//2, i%2])
+                        Transform(Location(x=transform.location.x, y=transform.location.y + 7, z=transform.location.z + 4),
+                            Rotation(yaw=transform.rotation.yaw + 90 + json_data['angel'] + json_data['intrinsic']['left']['yaw'],
+                                     pitch=json_data['orientation']["tilt"] + json_data['intrinsic']['left']['pitch'],
+                                     roll=json_data['intrinsic']['left']['roll'])), json_data, display_pos=[i, 0])
+                RGBCamera(world, display_manager,
+                        Transform(Location(x=transform.location.x, y=transform.location.y + 7 + json_data['baseline'], z=transform.location.z + 4),
+                            Rotation(yaw=transform.rotation.yaw + 90 - json_data['angel'] + json_data['intrinsic']['right']['yaw'],
+                                     pitch=json_data['orientation']["tilt"] + json_data['intrinsic']['right']['pitch'],
+                                     roll=json_data['intrinsic']['right']['roll'])), json_data, display_pos=[i, 1])
+                RGBCamera(world, display_manager,
+                          Transform(Location(x=transform.location.x, y=transform.location.y + 7+ json_data['baseline'], z=transform.location.z + 4),
+                            Rotation(yaw=transform.rotation.yaw - 90 + json_data['angel'] + json_data['intrinsic']['left']['yaw'],
+                                     pitch=json_data['orientation']["tilt"] + json_data['intrinsic']['left']['pitch'],
+                                     roll=json_data['intrinsic']['left']['roll'])), json_data, display_pos=[i, 2])
+                RGBCamera(world, display_manager,
+                          Transform(Location(x=transform.location.x, y=transform.location.y + 7 , z=transform.location.z + 4),
+                            Rotation(yaw=transform.rotation.yaw - 90 - json_data['angel'] + json_data['intrinsic']['right']['yaw'],
+                                     pitch=json_data['orientation']["tilt"] + json_data['intrinsic']['right']['pitch'],
+                                     roll=json_data['intrinsic']['right']['roll'])), json_data, display_pos=[i, 3])
             i = i + 1
 
         #Simulation loop
@@ -224,8 +288,13 @@ def run_simulation(args, client):
         if display_manager:
             display_manager.destroy()
 
-        # client.apply_batch([carla.command.DestroyActor(x) for x in vehicle_list])
 
+
+def read_json(path):
+    with open(path, "r") as read_file:
+        json_data = ''.join(line for line in read_file if not line.startswith('//'))
+        print(json_data)
+        return json.loads(json_data)
 
 
 def main():
@@ -242,31 +311,14 @@ def main():
         default=2000,
         type=int,
         help='TCP port to listen to (default: 2000)')
-    argparser.add_argument(
-        '--sync',
-        action='store_true',
-        help='Synchronous mode execution')
-    argparser.add_argument(
-        '--async',
-        dest='sync',
-        action='store_false',
-        help='Asynchronous mode execution')
-    argparser.set_defaults(sync=True)
-    argparser.add_argument(
-        '--res',
-        metavar='WIDTHxHEIGHT',
-        default='1280x720',
-        help='window resolution (default: 1280x720)')
 
     args = argparser.parse_args()
-
-    args.width, args.height = [int(x) for x in args.res.split('x')]
 
     try:
         client = carla.Client(args.host, args.port)
         client.set_timeout(5.0)
 
-        run_simulation(args, client)
+        run_simulation(client)
 
     except KeyboardInterrupt:
         print('\nCancelled by user. Bye!')

@@ -1,0 +1,37 @@
+{
+//  "junction_coordinate" : {"x" : -48.279052734375, "y" : 132.96006774902344, "z" : 0}, // 2 traffic lights
+//  "junction_coordinate" : {"x" : -50.80909729003906, "y" : -60.55316162109375, "z" : 0}, // 3 traffic lights
+  "junction_coordinate" : {"x" : -46.656982421875, "y" : 21.270511627197266, "z" : 0}, // 4 traffic lights
+  "width" : 1280,
+  "height" : 740,
+  "baseline": 0.5,
+  "angel" : 5,
+  "orientation" :
+  {
+    "tilt" : -20
+  },
+  "intrinsic" : {
+    "left" : {
+      "yaw" : 0,
+      "pitch" : 0,
+      "roll" : 0
+    },
+    "right" : {
+      "yaw" : 0,
+      "pitch" : 0,
+      "roll" : 0
+    }
+  },
+  "fov" : 120,
+  "distortion" :
+  {
+    "lens_circle_falloff": 2.0,
+    "lens_circle_multiplier": 2.0,
+    "lens_k" : -3.0,
+    "lens_kcube" : -1.0,
+    "lens_x_size" : 0.2,
+    "lens_y_size" : 0.08
+
+  }
+
+}
